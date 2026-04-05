@@ -657,8 +657,14 @@
         let lastX, lastY, lastZ;
         let moveCounter = 0;
 
+        let shakeCooldown = false;
+        let voiceMonitoringStarted = false;
+        let trackingWatchId = null;
+        let lastTrackingSentAt = 0;
+
         window.addEventListener('devicemotion', (event) => {
             let acceleration = event.accelerationIncludingGravity;
+            if (!acceleration || shakeCooldown) return;
             let curX = acceleration.x;
             let curY = acceleration.y;
             let curZ = acceleration.z;
@@ -676,13 +682,16 @@
                 }
 
                 if (moveCounter > 5) {
-                    alert("Shake Detected! Triggering SOS...");
-                    triggerSOSEmergency(); // Calls your existing SOS logic
+                    shakeCooldown = true;
+                    triggerSOSEmergency();
                     moveCounter = 0;
+                    setTimeout(() => {
+                        shakeCooldown = false;
+                    }, 8000);
                 }
             }
             lastX = curX; lastY = curY; lastZ = curZ;
-        });
+        }, { passive: true });
 
         // SOS Voice Detection Initialization
         let recognition;
@@ -704,20 +713,26 @@
                     .then(response => response.json())
                     .then(data => {
                         if (data.status === 'trigger_sos') {
-                            alert("SOS TRIGGERED VIA VOICE!");
                             triggerSOSEmergency();
                         }
                     });
             };
             recognition.onend = function () {
-                console.log("Restarting voice recognition...");
-                startVoiceMonitor();
+                if (!document.hidden && voiceMonitoringStarted) {
+                    startVoiceMonitor();
+                }
             };
         }
 
         function startVoiceMonitor() {
-            if (recognition) {
-                navigator.mediaDevices.getUserMedia({ audio: true })
+            if (recognition && !document.hidden) {
+                navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                })
                     .then(() => {
                         try {
                             recognition.start();
@@ -731,8 +746,26 @@
             }
         }
 
-        // Start voice monitor automatically on home load
-        window.addEventListener('load', startVoiceMonitor);
+        function enableBackgroundSafety() {
+            if (voiceMonitoringStarted) return;
+            voiceMonitoringStarted = true;
+            startVoiceMonitor();
+        }
+
+        window.addEventListener('click', enableBackgroundSafety, { once: true, passive: true });
+        window.addEventListener('touchstart', enableBackgroundSafety, { once: true, passive: true });
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && recognition) {
+                try {
+                    recognition.stop();
+                } catch (e) {
+                    console.log("Voice monitor already stopped");
+                }
+            } else if (voiceMonitoringStarted) {
+                startVoiceMonitor();
+            }
+        });
 
         // Toggle Medical ID Modal
         function toggleMedID() {
@@ -766,7 +799,9 @@
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(pos => {
                 document.getElementById("liveLocation").innerHTML = pos.coords.latitude.toFixed(4) + ", " + pos.coords.longitude.toFixed(4);
-            });
+            }, () => {
+                document.getElementById("liveLocation").innerHTML = "Location unavailable";
+            }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 });
         }
 
         // Monitor Battery Status with Location Tracking
@@ -776,7 +811,7 @@
                     const level = Math.round(battery.level * 100);
                     document.getElementById("batteryPercent").innerHTML = level + "%";
                     if (level <= 15 && !battery.charging && !sessionStorage.getItem('batteryAlertSent')) {
-                        navigator.geolocation.getCurrentPosition((position) => {
+                navigator.geolocation.getCurrentPosition((position) => {
                             fetch('/trigger_battery_alert', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
@@ -787,7 +822,7 @@
                                 })
                             });
                             sessionStorage.setItem('batteryAlertSent', 'true');
-                        });
+                        }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 });
                     }
                 };
                 updateBatteryUI();
@@ -813,7 +848,7 @@
                     window.open(`https://wa.me/?text=${message}`, '_blank');
                 }, () => {
                     alert("Please enable GPS to use this feature.");
-                });
+                }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 30000 });
             }
         }
 
@@ -845,7 +880,9 @@
 
                 startLiveTracking();
 
-            });
+            }, () => {
+                console.error("Unable to access location for SOS");
+            }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 });
 
             window.location.href = "tel:" + emergencyContact;
         }
@@ -864,7 +901,9 @@
                         });
                         if (response.ok) { console.log("Silent alert successful."); }
                     } catch (err) { console.error("Silent Alert Failed", err); }
-                });
+                }, () => {
+                    console.error("Unable to access location for silent alert");
+                }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 15000 });
             }
         }
 
@@ -888,7 +927,7 @@
                     document.getElementById('timer-status').innerText = "Server Watchdog Active!";
                     safetyTimer = setInterval(updateCountdown, 1000);
                 }
-            }, () => alert("GPS is required to start the safety watch."));
+            }, () => alert("GPS is required to start the safety watch."), { enableHighAccuracy: false, timeout: 10000, maximumAge: 15000 });
         }
 
         // Update Timer Countdown
@@ -930,8 +969,10 @@
             });
             if (response.ok) {
                 clearInterval(safetyTimer);
-                alert("Check-in successful! Watchdog deactivated.");
-                location.reload();
+                document.getElementById('timer-status').innerText = "Check-in successful. Watchdog deactivated.";
+                document.getElementById('countdown').style.display = 'none';
+                document.getElementById('checkin-btn').style.display = 'none';
+                document.getElementById('timer-controls').style.display = 'block';
             }
         }
 
@@ -945,33 +986,39 @@
         }
         // Start Live Location Tracking for Map View        
         function startLiveTracking() {
-
-            if (navigator.geolocation) {
-
-                navigator.geolocation.watchPosition(function (position) {
-
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
-
-                    console.log("Live:", lat, lon);
-
-                    fetch("/send_live_location", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            lat: lat,
-                            lon: lon
-                        })
-                    })
-                        .then(res => {
-                            if (!res.ok) throw new Error("Tracking error");
-                        })
-                        .catch(err => {
-                            console.error("Tracking Error:", err);
-                        });
-                });
-
+            if (!navigator.geolocation || trackingWatchId !== null) {
+                return;
             }
+
+            trackingWatchId = navigator.geolocation.watchPosition(function (position) {
+                const now = Date.now();
+                if (now - lastTrackingSentAt < 15000) {
+                    return;
+                }
+
+                lastTrackingSentAt = now;
+
+                fetch("/update_live_location", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        lat: position.coords.latitude,
+                        lon: position.coords.longitude
+                    })
+                })
+                    .then(res => {
+                        if (!res.ok) throw new Error("Tracking error");
+                    })
+                    .catch(err => {
+                        console.error("Tracking Error:", err);
+                    });
+            }, function (error) {
+                console.error("Tracking Error:", error);
+            }, {
+                enableHighAccuracy: false,
+                timeout: 10000,
+                maximumAge: 15000
+            });
 
         }
     </script>

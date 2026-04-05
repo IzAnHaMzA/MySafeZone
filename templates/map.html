@@ -319,6 +319,7 @@
         let pathCoords = [];
         let polyline;
         let nearbyLayer = L.layerGroup();
+        let locationWatchId = null;
 
         function initMap(lat, lng) {
             map = L.map('map').setView([lat, lng], 15);
@@ -370,7 +371,7 @@
         }
 
         function errorHandler(error) {
-            alert("⚠️ Please allow location access!");
+            alert("Please allow location access when Android asks.");
             console.log(error);
         }
 
@@ -437,13 +438,23 @@
         }
 
         // 📍 Live tracking
-        navigator.geolocation.watchPosition(
-            updateLocation,
-            errorHandler,
-            {
-                enableHighAccuracy: true
+        function requestMapLocationAccess() {
+            if (!navigator.geolocation || locationWatchId !== null) {
+                return;
             }
-        );
+
+            locationWatchId = navigator.geolocation.watchPosition(
+                updateLocation,
+                errorHandler,
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 10000
+                }
+            );
+        }
+
+        window.addEventListener('load', requestMapLocationAccess);
 
         // ACTIVE NAV
         const currentPage = window.location.pathname;

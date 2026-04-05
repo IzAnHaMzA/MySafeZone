@@ -662,6 +662,20 @@
         let trackingWatchId = null;
         let lastTrackingSentAt = 0;
 
+        async function requestLocationPermission() {
+            if (!navigator.geolocation) {
+                throw new Error("Location is not supported on this device.");
+            }
+
+            return new Promise((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(
+                    position => resolve(position),
+                    () => reject(new Error("Please allow location access when Android asks.")),
+                    { enableHighAccuracy: false, timeout: 10000, maximumAge: 15000 }
+                );
+            });
+        }
+
         window.addEventListener('devicemotion', (event) => {
             let acceleration = event.accelerationIncludingGravity;
             if (!acceleration || shakeCooldown) return;
@@ -847,7 +861,7 @@
                     const message = encodeURIComponent(`EMERGENCY: I need help! My current location is: ${mapLink}`);
                     window.open(`https://wa.me/?text=${message}`, '_blank');
                 }, () => {
-                    alert("Please enable GPS to use this feature.");
+                    alert("Please allow location access when Android asks.");
                 }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 30000 });
             }
         }
@@ -858,8 +872,8 @@
 
             speak("Emergency alert initiated");
 
-            navigator.geolocation.getCurrentPosition(async (pos) => {
-
+            try {
+                const pos = await requestLocationPermission();
                 const lat = pos.coords.latitude;
                 const lon = pos.coords.longitude;
 
@@ -879,10 +893,9 @@
                     });
 
                 startLiveTracking();
-
-            }, () => {
-                console.error("Unable to access location for SOS");
-            }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 });
+            } catch (error) {
+                alert(error.message || "Location access is required for SOS.");
+            }
 
             window.location.href = "tel:" + emergencyContact;
         }
@@ -902,7 +915,7 @@
                         if (response.ok) { console.log("Silent alert successful."); }
                     } catch (err) { console.error("Silent Alert Failed", err); }
                 }, () => {
-                    console.error("Unable to access location for silent alert");
+                    alert("Please allow location access when Android asks.");
                 }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 15000 });
             }
         }
@@ -927,7 +940,7 @@
                     document.getElementById('timer-status').innerText = "Server Watchdog Active!";
                     safetyTimer = setInterval(updateCountdown, 1000);
                 }
-            }, () => alert("GPS is required to start the safety watch."), { enableHighAccuracy: false, timeout: 10000, maximumAge: 15000 });
+            }, () => alert("Please allow location access when Android asks."), { enableHighAccuracy: false, timeout: 10000, maximumAge: 15000 });
         }
 
         // Update Timer Countdown
